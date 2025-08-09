@@ -1,4 +1,4 @@
-// server.js - Node.js server with caching for Google Sheets data
+// server.js - Complete Node.js server with caching and school data endpoints
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
@@ -116,6 +116,320 @@ app.get('/api/sheets/:sheetName', async (req, res) => {
   }
 });
 
+// Specialized endpoint for school performance data
+app.get('/api/schools/performance', async (req, res) => {
+  stats.totalRequests++;
+  
+  const { year, schoolId, region } = req.query;
+  const cacheKey = `schools-performance-${JSON.stringify(req.query)}`;
+
+  try {
+    // Check cache first
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) {
+      stats.cacheHits++;
+      return res.json({
+        data: cachedData,
+        cached: true,
+        cacheExpiry: cache.getTtl(cacheKey)
+      });
+    }
+
+    stats.cacheMisses++;
+
+    // Fetch both sheets
+    const [profileData, performanceData] = await Promise.all([
+      fetchFromGoogleSheets('School Profile', 'A:E'), // AGE ID, Name, Suburb, Region, Calendar Year
+      fetchFromGoogleSheets('School Performance', 'A:Z') // ID + performance data by year
+    ]);
+
+    // Process profile data
+    const profileHeaders = profileData[0];
+    const profiles = profileData.slice(1).map(row => ({
+      ageId: row[0],
+      name: row[1],
+      suburb: row[2],
+      region: row[3],
+      calendarYear: parseInt(row[4])
+    }));
+
+    // Process performance data
+    // Row 3 contains the years
+    const yearRow = performanceData[2];
+    const yearColumns = {};
+    
+    // Map year to column index
+    yearRow.forEach((cellValue, index) => {
+      if (cellValue && !isNaN(cellValue)) {
+        yearColumns[parseInt(cellValue)] = index;
+      }
+    });
+
+    // Process performance records (starting from row 4)
+    const performances = performanceData.slice(3).map(row => {
+      const record = { id: row[0] };
+      
+      // Extract performance for each year
+      Object.entries(yearColumns).forEach(([year, colIndex]) => {
+        record[`performance_${year}`] = row[colIndex] || null;
+      });
+      
+      return record;
+    });
+
+    // Join the data
+    const joinedData = [];
+    
+    profiles.forEach(profile => {
+      const perfRecord = performances.find(p => p.id === profile.ageId);
+      
+      if (perfRecord) {
+        const schoolData = {
+          ...profile,
+          performances: {}
+        };
+        
+        // Add all year performances
+        Object.keys(yearColumns).forEach(year => {
+          schoolData.performances[year] = perfRecord[`performance_${year}`];
+        });
+        
+        joinedData.push(schoolData);
+      }
+    });
+
+    // Apply filters if provided
+    let filteredData = joinedData;
+    
+    if (year) {
+      filteredData = filteredData.filter(school => 
+        school.calendarYear === parseInt(year) || 
+        (school.performances[year] !== null && school.performances[year] !== undefined)
+      );
+    }
+    
+    if (schoolId) {
+      filteredData = filteredData.filter(school => school.ageId === schoolId);
+    }
+    
+    if (region) {
+      filteredData = filteredData.filter(school => 
+        school.region.toLowerCase().includes(region.toLowerCase())
+      );
+    }
+
+    // Group by school for summary
+    const schoolSummary = {};
+    filteredData.forEach(record => {
+      if (!schoolSummary[record.ageId]) {
+        schoolSummary[record.ageId] = {
+          ageId: record.ageId,
+          name: record.name,
+          profiles: [],
+          performances: record.performances,
+          averagePerformance: 0
+        };
+      }
+      
+      schoolSummary[record.ageId].profiles.push({
+        year: record.calendarYear,
+        suburb: record.suburb,
+        region: record.region
+      });
+    });
+
+    // Calculate average performance for each school
+    Object.values(schoolSummary).forEach(school => {
+      const scores = Object.values(school.performances).filter(v => v !== null);
+      if (scores.length > 0) {
+        school.averagePerformance = scores.reduce((a, b) => parseFloat(a) + parseFloat(b), 0) / scores.length;
+      }
+    });
+
+    const result = {
+      schools: Object.values(schoolSummary),
+      totalSchools: Object.keys(schoolSummary).length,
+      years: Object.keys(yearColumns).sort(),
+      metadata: {
+        profileCount: profiles.length,
+        performanceCount: performances.length,
+        joinedCount: filteredData.length
+      }
+    };
+
+    // Store in cache
+    cache.set(cacheKey, result);
+
+    res.json({
+      data: result,
+      cached: false,
+      cacheExpiry: cache.getTtl(cacheKey)
+    });
+
+  } catch (error) {
+    console.error('Error in school performance endpoint:', error);
+    res.status(500).json({
+      error: 'Failed to fetch school performance data',
+      message: error.message
+    });
+  }
+});
+
+// Endpoint for individual school history
+app.get('/api/schools/:schoolId/history', async (req, res) => {
+  const { schoolId } = req.params;
+  const cacheKey = `school-history-${schoolId}`;
+
+  try {
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) {
+      return res.json({
+        data: cachedData,
+        cached: true
+      });
+    }
+
+    // Fetch both sheets
+    const [profileData, performanceData] = await Promise.all([
+      fetchFromGoogleSheets('School Profile', 'A:E'),
+      fetchFromGoogleSheets('School Performance', 'A:Z')
+    ]);
+
+    // Find all profile records for this school
+    const profileHeaders = profileData[0];
+    const allProfiles = profileData.slice(1)
+      .filter(row => row[0] === schoolId)
+      .map(row => ({
+        ageId: row[0],
+        name: row[1],
+        suburb: row[2],
+        region: row[3],
+        calendarYear: parseInt(row[4])
+      }))
+      .sort((a, b) => a.calendarYear - b.calendarYear);
+
+    // Get performance data
+    const yearRow = performanceData[2];
+    const performanceRow = performanceData.find(row => row[0] === schoolId);
+    
+    const performances = {};
+    if (performanceRow) {
+      yearRow.forEach((year, index) => {
+        if (year && !isNaN(year)) {
+          performances[year] = performanceRow[index] || null;
+        }
+      });
+    }
+
+    const result = {
+      schoolId,
+      name: allProfiles[0]?.name || 'Unknown',
+      profileHistory: allProfiles,
+      performances,
+      summary: {
+        yearsActive: allProfiles.map(p => p.calendarYear),
+        regionsServed: [...new Set(allProfiles.map(p => p.region))],
+        suburbsServed: [...new Set(allProfiles.map(p => p.suburb))]
+      }
+    };
+
+    cache.set(cacheKey, result);
+
+    res.json({
+      data: result,
+      cached: false
+    });
+
+  } catch (error) {
+    console.error('Error fetching school history:', error);
+    res.status(500).json({
+      error: 'Failed to fetch school history',
+      message: error.message
+    });
+  }
+});
+
+// Endpoint for comparative analysis
+app.get('/api/schools/compare', async (req, res) => {
+  const { schoolIds, years } = req.query;
+  const ids = schoolIds ? schoolIds.split(',') : [];
+  const yearFilter = years ? years.split(',').map(y => parseInt(y)) : [2021, 2022, 2023, 2024];
+  
+  const cacheKey = `compare-${schoolIds}-${years}`;
+
+  try {
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) {
+      return res.json({
+        data: cachedData,
+        cached: true
+      });
+    }
+
+    const [profileData, performanceData] = await Promise.all([
+      fetchFromGoogleSheets('School Profile', 'A:E'),
+      fetchFromGoogleSheets('School Performance', 'A:Z')
+    ]);
+
+    // Process and filter schools
+    const yearRow = performanceData[2];
+    const yearIndices = {};
+    yearRow.forEach((year, index) => {
+      if (year && yearFilter.includes(parseInt(year))) {
+        yearIndices[year] = index;
+      }
+    });
+
+    const comparisonData = ids.map(schoolId => {
+      // Get latest profile
+      const schoolProfiles = profileData.slice(1).filter(row => row[0] === schoolId);
+      const latestProfile = schoolProfiles[schoolProfiles.length - 1] || {};
+      
+      // Get performance data
+      const perfRow = performanceData.find(row => row[0] === schoolId);
+      const performances = {};
+      
+      if (perfRow) {
+        Object.entries(yearIndices).forEach(([year, index]) => {
+          performances[year] = perfRow[index] || null;
+        });
+      }
+
+      return {
+        schoolId,
+        name: latestProfile[1] || 'Unknown',
+        region: latestProfile[3] || 'Unknown',
+        performances,
+        trend: calculateTrend(performances)
+      };
+    });
+
+    const result = {
+      comparison: comparisonData,
+      years: yearFilter,
+      summary: {
+        highestPerformer: findHighestPerformer(comparisonData),
+        mostImproved: findMostImproved(comparisonData),
+        averageByYear: calculateAverageByYear(comparisonData, yearFilter)
+      }
+    };
+
+    cache.set(cacheKey, result);
+
+    res.json({
+      data: result,
+      cached: false
+    });
+
+  } catch (error) {
+    console.error('Error in comparison:', error);
+    res.status(500).json({
+      error: 'Failed to compare schools',
+      message: error.message
+    });
+  }
+});
+
 // Endpoint to get server statistics
 app.get('/api/stats', (req, res) => {
   res.json({
@@ -139,13 +453,100 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date() });
 });
 
+// Helper functions
+function calculateTrend(performances) {
+  const values = Object.entries(performances)
+    .filter(([year, value]) => value !== null)
+    .sort(([yearA], [yearB]) => parseInt(yearA) - parseInt(yearB))
+    .map(([year, value]) => parseFloat(value));
+
+  if (values.length < 2) return 'insufficient_data';
+  
+  const firstValue = values[0];
+  const lastValue = values[values.length - 1];
+  const change = ((lastValue - firstValue) / firstValue) * 100;
+  
+  if (change > 5) return 'improving';
+  if (change < -5) return 'declining';
+  return 'stable';
+}
+
+function findHighestPerformer(schools) {
+  let highest = null;
+  let highestAvg = -Infinity;
+  
+  schools.forEach(school => {
+    const scores = Object.values(school.performances)
+      .filter(v => v !== null)
+      .map(v => parseFloat(v));
+    
+    if (scores.length > 0) {
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      if (avg > highestAvg) {
+        highestAvg = avg;
+        highest = { name: school.name, average: avg.toFixed(2) };
+      }
+    }
+  });
+  
+  return highest;
+}
+
+function findMostImproved(schools) {
+  let mostImproved = null;
+  let highestImprovement = -Infinity;
+  
+  schools.forEach(school => {
+    const years = Object.keys(school.performances).sort();
+    if (years.length >= 2) {
+      const firstYear = years[0];
+      const lastYear = years[years.length - 1];
+      
+      if (school.performances[firstYear] !== null && school.performances[lastYear] !== null) {
+        const improvement = parseFloat(school.performances[lastYear]) - parseFloat(school.performances[firstYear]);
+        
+        if (improvement > highestImprovement) {
+          highestImprovement = improvement;
+          mostImproved = {
+            name: school.name,
+            improvement: improvement.toFixed(2),
+            from: firstYear,
+            to: lastYear
+          };
+        }
+      }
+    }
+  });
+  
+  return mostImproved;
+}
+
+function calculateAverageByYear(schools, years) {
+  const averages = {};
+  
+  years.forEach(year => {
+    const scores = schools
+      .map(school => school.performances[year])
+      .filter(score => score !== null)
+      .map(score => parseFloat(score));
+    
+    if (scores.length > 0) {
+      averages[year] = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2);
+    } else {
+      averages[year] = null;
+    }
+  });
+  
+  return averages;
+}
+
 // Serve a simple demo page
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Google Sheets API Server</title>
+      <title>School Data API Server</title>
       <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
         .endpoint { background: #f4f4f4; padding: 10px; margin: 10px 0; border-radius: 5px; }
@@ -153,14 +554,31 @@ app.get('/', (req, res) => {
       </style>
     </head>
     <body>
-      <h1>Google Sheets API Server with Caching</h1>
-      <p>This server provides cached access to Google Sheets data, reducing API calls and improving performance.</p>
+      <h1>School Data API Server with Caching</h1>
+      <p>This server provides cached access to school profile and performance data.</p>
       
       <h2>Available Endpoints:</h2>
       <div class="endpoint">
         <strong>GET /api/sheets/:sheetName</strong><br>
-        Fetch data from a specific sheet (default range: A:C)<br>
+        Fetch data from a specific sheet<br>
         Query params: <code>?range=A:Z</code>
+      </div>
+      
+      <div class="endpoint">
+        <strong>GET /api/schools/performance</strong><br>
+        Get joined school profile and performance data<br>
+        Query params: <code>?year=2023&region=North&schoolId=12345</code>
+      </div>
+      
+      <div class="endpoint">
+        <strong>GET /api/schools/:schoolId/history</strong><br>
+        Get complete history for a specific school
+      </div>
+      
+      <div class="endpoint">
+        <strong>GET /api/schools/compare</strong><br>
+        Compare multiple schools<br>
+        Query params: <code>?schoolIds=123,456,789&years=2022,2023,2024</code>
       </div>
       
       <div class="endpoint">
@@ -191,223 +609,3 @@ app.listen(PORT, () => {
   console.log(`Cache TTL: 60 seconds`);
   console.log(`Using ${SERVICE_ACCOUNT_KEY ? 'Service Account' : 'API Key'} authentication`);
 });
-
-// --- Package.json ---
-/*
-{
-  "name": "google-sheets-cache-server",
-  "version": "1.0.0",
-  "description": "Cached Google Sheets API server",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "googleapis": "^118.0.0",
-    "node-cache": "^5.1.2",
-    "dotenv": "^16.0.3"
-  },
-  "devDependencies": {
-    "nodemon": "^2.0.22"
-  }
-}
-*/
-
-// --- .env.example ---
-/*
-SPREADSHEET_ID=your-spreadsheet-id-here
-GOOGLE_API_KEY=your-api-key-here
-
-# Optional: Use Service Account instead (more secure)
-# GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}
-
-PORT=3000
-*/
-
-// --- client.html - Updated client to use the server ---
-/*
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google Sheets Table Viewer (Server Version)</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 1000px;
-            margin: 50px auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            background-color: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        h1 { color: #333; margin-bottom: 20px; }
-        button {
-            background-color: #4CAF50;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            margin-right: 10px;
-        }
-        button:hover { background-color: #45a049; }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        th {
-            background-color: #f8f9fa;
-            font-weight: bold;
-        }
-        tr:hover { background-color: #f5f5f5; }
-        .stats {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #e3f2fd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        .cache-hit { color: #4CAF50; font-weight: bold; }
-        .cache-miss { color: #FF9800; font-weight: bold; }
-        .error { color: #f44336; padding: 15px; background-color: #ffebee; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Google Sheets Table Viewer (Cached Server Version)</h1>
-        
-        <button onclick="fetchData()">Fetch Data</button>
-        <button onclick="fetchStats()">View Stats</button>
-        <button onclick="clearCache()">Clear Cache</button>
-        
-        <div id="stats"></div>
-        <div id="result"></div>
-    </div>
-
-    <script>
-        const SERVER_URL = 'http://localhost:3000'; // Change this to your server URL
-
-        async function fetchData() {
-            const resultDiv = document.getElementById('result');
-            const statsDiv = document.getElementById('stats');
-            
-            try {
-                const response = await fetch(`${SERVER_URL}/api/sheets/Sheet2`);
-                const result = await response.json();
-                
-                if (response.ok) {
-                    displayTable(result.data);
-                    
-                    // Show cache status
-                    statsDiv.innerHTML = `
-                        <div class="stats">
-                            <strong>Cache Status:</strong> 
-                            <span class="${result.cached ? 'cache-hit' : 'cache-miss'}">
-                                ${result.cached ? 'Cache Hit' : 'Cache Miss (Fresh from Google Sheets)'}
-                            </span><br>
-                            <strong>Cache Hit Rate:</strong> ${result.stats.cacheHitRate}<br>
-                            <strong>Cache Expires:</strong> ${new Date(result.cacheExpiry).toLocaleTimeString()}
-                        </div>
-                    `;
-                } else {
-                    throw new Error(result.message || 'Failed to fetch data');
-                }
-            } catch (error) {
-                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
-            }
-        }
-
-        async function fetchStats() {
-            const resultDiv = document.getElementById('result');
-            
-            try {
-                const response = await fetch(`${SERVER_URL}/api/stats`);
-                const stats = await response.json();
-                
-                resultDiv.innerHTML = `
-                    <div class="stats">
-                        <h3>Server Statistics</h3>
-                        <strong>Total Requests:</strong> ${stats.totalRequests}<br>
-                        <strong>Cache Hits:</strong> ${stats.cacheHits}<br>
-                        <strong>Cache Misses:</strong> ${stats.cacheMisses}<br>
-                        <strong>API Calls to Google:</strong> ${stats.apiCalls}<br>
-                        <strong>Cache Hit Rate:</strong> ${stats.cacheHitRate}<br>
-                        <strong>Errors:</strong> ${stats.errors}<br>
-                        <strong>Last API Call:</strong> ${stats.lastApiCall ? new Date(stats.lastApiCall).toLocaleString() : 'Never'}<br>
-                        <strong>Server Uptime:</strong> ${Math.floor(stats.uptime / 60)} minutes
-                    </div>
-                `;
-            } catch (error) {
-                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
-            }
-        }
-
-        async function clearCache() {
-            try {
-                const response = await fetch(`${SERVER_URL}/api/cache/clear`, { method: 'POST' });
-                const result = await response.json();
-                alert(result.message);
-            } catch (error) {
-                alert('Error clearing cache: ' + error.message);
-            }
-        }
-
-        function displayTable(values) {
-            const resultDiv = document.getElementById('result');
-            
-            if (!values || values.length === 0) {
-                resultDiv.innerHTML = '<p>No data found</p>';
-                return;
-            }
-            
-            const headers = values[0] || ['ID', 'Name', 'Value'];
-            const rows = values.slice(1);
-            
-            let html = '<table><thead><tr>';
-            headers.forEach(header => {
-                html += `<th>${escapeHtml(header || '')}</th>`;
-            });
-            html += '</tr></thead><tbody>';
-            
-            rows.forEach(row => {
-                html += '<tr>';
-                for (let i = 0; i < headers.length; i++) {
-                    html += `<td>${escapeHtml(row[i] || '')}</td>`;
-                }
-                html += '</tr>';
-            });
-            
-            html += '</tbody></table>';
-            html += `<p style="margin-top: 10px; color: #666;">Total records: ${rows.length}</p>`;
-            
-            resultDiv.innerHTML = html;
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Auto-refresh every 30 seconds
-        setInterval(fetchData, 30000);
-    </script>
-</body>
-</html>
-*/
