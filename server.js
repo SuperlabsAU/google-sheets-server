@@ -1,10 +1,12 @@
 // server.js
-// School Profile + School Performance (3-row header) reader with inner-join on "School ID"
+// School Profile + School Performance (3-row header) reader with manual snapshot + disk persistence + inner-join on "School ID"
 
 const express = require("express");
 const cors = require("cors");
 const NodeCache = require("node-cache");
 const { google } = require("googleapis");
+const fs = require("fs");
+const path = require("path");
 
 // ---- Server setup
 const app = express();
@@ -18,17 +20,19 @@ const API_KEY = process.env.GOOGLE_API_KEY || "";
 const SERVICE_ACCOUNT_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_KEY
   ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY)
   : null;
+const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ""; // optional token to protect /admin/refresh
+const SNAPSHOT_FILE = process.env.SNAPSHOT_FILE || path.resolve(process.cwd(), "snapshot.json");
 
 // ---- Sheet ranges
-const PROFILE_RANGE = "School Profile!A:AI";        // row 1 headers, row 2+ data
-const PERF_HEADERS_RANGE = "School Performance!1:3"; // 3-row header
-const PERF_DATA_RANGE = "School Performance!4:100000"; // data starts row 4
+const PROFILE_RANGE = "School Profile!A:AI";          // row 1 headers, row 2+ data
+const PERF_HEADERS_RANGE = "School Performance!1:3";  // 3-row header
+const PERF_DATA_RANGE = "School Performance!4:100000";// data starts row 4
 
-// Optional: convenience key-range (not required for inner-join/full)
+// Optional: convenience subrange labels (not required for join)
 const PERF_KEY_RANGE_A1 = { start: "AB", end: "AU" };
 
-// ---- Cache + stats
-const cache = new NodeCache({ stdTTL: 60 });
+// ---- Stats + cache (disable TTL; snapshot handles persistence)
+const cache = new NodeCache({ stdTTL: 0, checkperiod: 0 });
 const stats = {
   totalRequests: 0,
   cacheHits: 0,
@@ -36,6 +40,15 @@ const stats = {
   apiCalls: 0,
   errors: 0,
   lastApiCall: null,
+};
+
+// ---- Manual-refresh snapshot (in-memory)
+const SNAPSHOT = {
+  profile: null,        // { headers, rows, data }
+  performance: null,    // { headers, rows, data }
+  joinedMatched: null,  // { count, data }
+  lastUpdated: null,    // ISO string
+  lastReason: null
 };
 
 // ---- Helpers
@@ -92,6 +105,59 @@ function toKeyedBySchoolId(objs, headerRow) {
   return map;
 }
 
+// ---- Disk persistence helpers
+function snapshotToSerializable() {
+  return {
+    profile: SNAPSHOT.profile,
+    performance: SNAPSHOT.performance,
+    joinedMatched: SNAPSHOT.joinedMatched,
+    lastUpdated: SNAPSHOT.lastUpdated,
+    lastReason: SNAPSHOT.lastReason,
+    stats: {
+      apiCalls: stats.apiCalls,
+      totalRequests: stats.totalRequests,
+      cacheHits: stats.cacheHits,
+      cacheMisses: stats.cacheMisses,
+      lastApiCall: stats.lastApiCall,
+    },
+  };
+}
+function saveSnapshotToDisk() {
+  try {
+    const tmp = SNAPSHOT_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(snapshotToSerializable()), "utf8");
+    fs.renameSync(tmp, SNAPSHOT_FILE); // atomic-ish replace
+    return { ok: true, file: SNAPSHOT_FILE };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+function loadSnapshotFromDisk() {
+  try {
+    if (!fs.existsSync(SNAPSHOT_FILE)) return { ok: false, error: "file not found" };
+    const raw = fs.readFileSync(SNAPSHOT_FILE, "utf8");
+    const j = JSON.parse(raw);
+    SNAPSHOT.profile = j.profile || null;
+    SNAPSHOT.performance = j.performance || null;
+    SNAPSHOT.joinedMatched = j.joinedMatched || null;
+    SNAPSHOT.lastUpdated = j.lastUpdated || null;
+    SNAPSHOT.lastReason = j.lastReason || null;
+    if (j.stats) Object.assign(stats, j.stats);
+    return { ok: true, file: SNAPSHOT_FILE };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+function snapshotFileInfo() {
+  try {
+    if (!fs.existsSync(SNAPSHOT_FILE)) return { exists: false };
+    const st = fs.statSync(SNAPSHOT_FILE);
+    return { exists: true, file: SNAPSHOT_FILE, bytes: st.size, mtime: st.mtime.toISOString() };
+  } catch (e) {
+    return { exists: false, error: e?.message || String(e) };
+  }
+}
+
 // ---- Google Sheets client
 let API_MODE = "service"; // "service" | "apikey"
 async function getSheetsClient() {
@@ -110,12 +176,10 @@ async function getSheetsClient() {
   }
 
   // Fallback: API key (works for public/readable sheets)
-  if (!API_KEY) throw new Error("Either GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_API_KEY must be set.");
+  if (!API_KEY) throw new Error("Either GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_API_KEY must be set");
   API_MODE = "apikey";
-  return google.sheets({ version: "v4" /* auth not required for API key mode */ });
+  return google.sheets({ version: "v4" });
 }
-
-// Single-range read using spreadsheets.values.get (ValueRange). Docs: values.get.  [oai_citation:2‡Google for Developers](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get?utm_source=chatgpt.com)
 async function getSheetValues(sheets, range) {
   increment("apiCalls");
   stats.lastApiCall = new Date().toISOString();
@@ -124,19 +188,15 @@ async function getSheetValues(sheets, range) {
     range,
     majorDimension: "ROWS",
   };
-  // When using API key mode, attach the key (supported by googleapis client).  [oai_citation:3‡Google Cloud](https://googleapis.dev/nodejs/googleapis/latest/sheets/index.html?utm_source=chatgpt.com) [oai_citation:4‡GitHub](https://github.com/googleapis/google-api-nodejs-client/blob/main/src/apis/sheets/v4.ts?utm_source=chatgpt.com)
-  if (API_MODE === "apikey") params.key = API_KEY;
-
+  if (API_MODE === "apikey") params.key = API_KEY; // supported by googleapis client
   const res = await sheets.spreadsheets.values.get(params);
   return res.data.values || [];
 }
 
-// ---- Fetchers (cached)
+// ---- Snapshot-aware getters (fetch only when snapshot is empty)
 async function getProfile() {
-  const cacheKey = "profile_full";
   stats.totalRequests++;
-  const cached = cache.get(cacheKey);
-  if (cached) { stats.cacheHits++; return cached; }
+  if (SNAPSHOT.profile) { stats.cacheHits++; return SNAPSHOT.profile; }
   stats.cacheMisses++;
 
   const sheets = await getSheetsClient();
@@ -146,17 +206,13 @@ async function getProfile() {
   const header = values[0];
   const dataRows = values.slice(1);
   const data = rowsToObjects(dataRows, header);
-
   const result = { headers: header, rows: dataRows, data };
-  cache.set(cacheKey, result);
+  SNAPSHOT.profile = result;
   return result;
 }
-
 async function getPerformanceFull() {
-  const cacheKey = "performance_full";
   stats.totalRequests++;
-  const cached = cache.get(cacheKey);
-  if (cached) { stats.cacheHits++; return cached; }
+  if (SNAPSHOT.performance) { stats.cacheHits++; return SNAPSHOT.performance; }
   stats.cacheMisses++;
 
   const sheets = await getSheetsClient();
@@ -170,49 +226,65 @@ async function getPerformanceFull() {
 
   const data = rowsToObjects(dataRows, flatHeaders);
   const result = { headers: flatHeaders, rows: dataRows, data };
-  cache.set(cacheKey, result);
+  SNAPSHOT.performance = result;
   return result;
 }
-
-// Optional: AB:AU convenience subset
-function filterToKeyCols(rows, headers) {
-  const schoolIdx = findSchoolIdIndex(headers);
-  const idxs = [];
-  if (schoolIdx >= 0) idxs.push(schoolIdx);
-  for (let i = AB_IDX; i <= AU_IDX && i < headers.length; i++) idxs.push(i);
-  const outHeaders = idxs.map((i) => headers[i]);
-  const outRows = rows.map((r) => idxs.map((i) => r[i] ?? ""));
-  return { headers: outHeaders, rows: outRows };
-}
-async function getPerformanceKey() {
-  const cacheKey = "performance_key";
-  stats.totalRequests++;
-  const cached = cache.get(cacheKey);
-  if (cached) { stats.cacheHits++; return cached; }
-  stats.cacheMisses++;
-
-  const { headers: flatHeaders, rows: fullRows } = await getPerformanceFull();
-  const { headers, rows } = filterToKeyCols(fullRows, flatHeaders);
-  const data = rowsToObjects(rows, headers);
-  const result = { headers, rows, data };
-  cache.set(cacheKey, result);
-  return result;
-}
-
-// Inner-join: only IDs present in BOTH sheets
 async function getJoinedFull() {
-  const cacheKey = "joined_full_matched";
   stats.totalRequests++;
-  const cached = cache.get(cacheKey);
-  if (cached) { stats.cacheHits++; return cached; }
+  if (SNAPSHOT.joinedMatched) { stats.cacheHits++; return SNAPSHOT.joinedMatched; }
   stats.cacheMisses++;
 
   const [profile, perf] = await Promise.all([getProfile(), getPerformanceFull()]);
+
   const pMap = toKeyedBySchoolId(profile.data, profile.headers);
   const qMap = toKeyedBySchoolId(perf.data, perf.headers);
   const schoolIdHeaderProfile = profile.headers.find(isSchoolIdHeader);
   const schoolIdHeaderPerf = perf.headers.find(isSchoolIdHeader);
 
+  // INNER JOIN: only IDs present in BOTH
+  const ids = [...pMap.keys()].filter((id) => qMap.has(id));
+  const merged = [];
+  for (const id of ids) {
+    const p = pMap.get(id) || {};
+    const q = qMap.get(id) || {};
+    const row = { ...p, ...q };
+    if (!row["School ID"]) {
+      if (schoolIdHeaderProfile && p[schoolIdHeaderProfile] != null) row["School ID"] = p[schoolIdHeaderProfile];
+      else if (schoolIdHeaderPerf && q[schoolIdHeaderPerf] != null) row["School ID"] = q[schoolIdHeaderPerf];
+      else row["School ID"] = id;
+    }
+    merged.push(row);
+  }
+  const result = { count: merged.length, data: merged };
+  SNAPSHOT.joinedMatched = result;
+  return result;
+}
+
+// ---- Manual refresh: pull everything and store snapshot (also save to disk)
+async function refreshAll(reason = "manual") {
+  const started = Date.now();
+  const sheets = await getSheetsClient();
+
+  // Profile
+  const values = await getSheetValues(sheets, PROFILE_RANGE);
+  const header = values[0] || [];
+  const dataRows = (values.length > 1) ? values.slice(1) : [];
+  const profile = { headers: header, rows: dataRows, data: rowsToObjects(dataRows, header) };
+
+  // Performance
+  const headerRows = await getSheetValues(sheets, PERF_HEADERS_RANGE);
+  const perfRows = await getSheetValues(sheets, PERF_DATA_RANGE);
+  const h1 = headerRows[0] || [];
+  const h2 = headerRows[1] || [];
+  const h3 = headerRows[2] || [];
+  const flat = buildPerfFlatHeaders(h1, h2, h3);
+  const performance = { headers: flat, rows: perfRows, data: rowsToObjects(perfRows, flat) };
+
+  // Joined (inner)
+  const pMap = toKeyedBySchoolId(profile.data, profile.headers);
+  const qMap = toKeyedBySchoolId(performance.data, performance.headers);
+  const schoolIdHeaderProfile = profile.headers.find(isSchoolIdHeader);
+  const schoolIdHeaderPerf = performance.headers.find(isSchoolIdHeader);
   const ids = [...pMap.keys()].filter((id) => qMap.has(id));
   const merged = [];
   for (const id of ids) {
@@ -227,9 +299,32 @@ async function getJoinedFull() {
     merged.push(row);
   }
 
-  const result = { count: merged.length, data: merged };
-  cache.set(cacheKey, result);
-  return result;
+  // Commit snapshot atomically
+  SNAPSHOT.profile = profile;
+  SNAPSHOT.performance = performance;
+  SNAPSHOT.joinedMatched = { count: merged.length, data: merged };
+  SNAPSHOT.lastUpdated = new Date().toISOString();
+  SNAPSHOT.lastReason = reason;
+
+  // Save snapshot to disk
+  const saveRes = saveSnapshotToDisk();
+
+  const finished = Date.now();
+  return {
+    ok: true,
+    lastUpdated: SNAPSHOT.lastUpdated,
+    lastReason: reason,
+    durationMs: finished - started,
+    counts: {
+      profileHeaders: profile.headers.length,
+      profileRows: profile.data.length,
+      performanceHeaders: performance.headers.length,
+      performanceRows: performance.data.length,
+      joinedRows: merged.length,
+    },
+    snapshotFile: snapshotFileInfo(),
+    saveResult: saveRes,
+  };
 }
 
 // ---- Routes
@@ -249,10 +344,51 @@ app.get("/api/debug/perf-headers", async (_req, res) => {
   }
 });
 
+// Admin: run refresh (GET/POST) — optional token via REFRESH_TOKEN
+app.all("/admin/refresh", async (req, res) => {
+  try {
+    if (REFRESH_TOKEN && (req.query.token !== REFRESH_TOKEN && req.headers["x-refresh-token"] !== REFRESH_TOKEN)) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    const meta = await refreshAll("manual_endpoint");
+    res.json(meta);
+  } catch (err) {
+    increment("errors");
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+// Admin: snapshot status (+ file info)
+app.get("/admin/status", (_req, res) => {
+  res.json({
+    lastUpdated: SNAPSHOT.lastUpdated,
+    lastReason: SNAPSHOT.lastReason,
+    counts: {
+      profile: SNAPSHOT.profile?.data?.length || 0,
+      performance: SNAPSHOT.performance?.data?.length || 0,
+      joined: SNAPSHOT.joinedMatched?.count || 0
+    },
+    stats,
+    snapshotFile: snapshotFileInfo()
+  });
+});
+
+// Admin: force save snapshot to disk
+app.post("/admin/save", (_req, res) => {
+  const r = saveSnapshotToDisk();
+  res.json({ action: "save", ...r, snapshotFile: snapshotFileInfo() });
+});
+
+// Admin: reload snapshot from disk
+app.post("/admin/load", (_req, res) => {
+  const r = loadSnapshotFromDisk();
+  res.json({ action: "load", ...r, snapshotFile: snapshotFileInfo() });
+});
+
 // Full profile
 app.get("/api/profile", async (_req, res) => {
   try {
-    const data = await getProfile();
+    const data = await getProfile(); // from snapshot or first-load
     res.json(data);
   } catch (err) {
     increment("errors");
@@ -272,17 +408,28 @@ app.get("/api/performance", async (_req, res) => {
 });
 
 // Optional key subset (AB:AU + School ID)
+function filterToKeyCols(rows, headers) {
+  const schoolIdx = findSchoolIdIndex(headers);
+  const idxs = [];
+  if (schoolIdx >= 0) idxs.push(schoolIdx);
+  for (let i = AB_IDX; i <= AU_IDX && i < headers.length; i++) idxs.push(i);
+  const outHeaders = idxs.map((i) => headers[i]);
+  const outRows = rows.map((r) => idxs.map((i) => r[i] ?? ""));
+  return { headers: outHeaders, rows: outRows };
+}
 app.get("/api/performance/key", async (_req, res) => {
   try {
-    const data = await getPerformanceKey();
-    res.json(data);
+    const { headers: flatHeaders, rows: fullRows } = await getPerformanceFull();
+    const { headers, rows } = filterToKeyCols(fullRows, flatHeaders);
+    const data = rowsToObjects(rows, headers);
+    res.json({ headers, rows, data });
   } catch (err) {
     increment("errors");
     res.status(500).json({ error: String(err?.message || err) });
   }
 });
 
-// Joined dataset: default inner-join; pass ?onlyMatched=false for outer-join
+// Joined dataset: default inner-join; pass ?onlyMatched=false for outer-join (computed from snapshot)
 app.get("/api/schools", async (req, res) => {
   try {
     const onlyMatched = (req.query.onlyMatched ?? "true").toString().toLowerCase() !== "false";
@@ -290,9 +437,9 @@ app.get("/api/schools", async (req, res) => {
       const result = await getJoinedFull();
       return res.json(result);
     }
-
-    // Outer-join fallback (if explicitly requested)
-    const [profile, perf] = await Promise.all([getProfile(), getPerformanceFull()]);
+    // Outer-join fallback using snapshot
+    const profile = await getProfile();
+    const perf = await getPerformanceFull();
     const pMap = toKeyedBySchoolId(profile.data, profile.headers);
     const qMap = toKeyedBySchoolId(perf.data, perf.headers);
     const allIds = new Set([...pMap.keys(), ...qMap.keys()]);
@@ -317,14 +464,42 @@ app.get("/api/schools", async (req, res) => {
   }
 });
 
-// ---- Start
+// ---- Start (try load from disk; else pre-warm from Sheets)
 app.listen(PORT, () => {
   console.log(`Server listening on :${PORT}`);
+  (async () => {
+    try {
+      const loadRes = loadSnapshotFromDisk();
+      if (loadRes.ok) {
+        console.log("Snapshot loaded from disk:", snapshotFileInfo());
+      } else {
+        const meta = await refreshAll("startup");
+        console.log("Snapshot preloaded from Sheets:", meta);
+      }
+    } catch (e) {
+      console.warn("Startup snapshot init failed:", e?.message || e);
+    }
+  })();
 });
 
 /*
-Notes:
-- Share the Google Sheet with your Service Account’s client_email to allow access, or use API key for publicly readable sheets.
-- This server reads ranges with spreadsheets.values.get (ValueRange). See official docs.   [oai_citation:5‡Google for Developers](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get?utm_source=chatgpt.com)
-- googleapis Node client supports JWT service accounts and API keys.   [oai_citation:6‡Google Cloud](https://googleapis.dev/nodejs/googleapis/latest/sheets/index.html?utm_source=chatgpt.com)
+ENV REQUIRED:
+- SPREADSHEET_ID
+- GOOGLE_SERVICE_ACCOUNT_KEY (JSON string)  OR  GOOGLE_API_KEY
+
+OPTIONAL:
+- REFRESH_TOKEN       (secret for /admin/refresh)
+- SNAPSHOT_FILE       (default: ./snapshot.json — point this to a Persistent Disk on Render, e.g. /data/snapshot.json)
+
+NOTES:
+- Snapshot is persisted to disk and reloaded on boot (fast wake-ups on sleeping free tier).
+- If the file is missing (first boot), the server fetches from Sheets and writes snapshot.json.
+- Endpoints:
+  * GET/POST /admin/refresh[?token=...]  -> pulls sheets, updates snapshot, saves to disk
+  * GET       /admin/status              -> snapshot counts, stats, and snapshot file info
+  * POST      /admin/save                -> force write current snapshot to disk
+  * POST      /admin/load                -> reload snapshot from disk
+  * GET       /api/profile, /api/performance, /api/performance/key
+  * GET       /api/schools               -> inner join by default; ?onlyMatched=false for outer
+  * GET       /api/debug/perf-headers
 */
