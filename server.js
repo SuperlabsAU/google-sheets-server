@@ -116,7 +116,8 @@ app.get('/api/sheets/:sheetName', async (req, res) => {
   }
 });
 
-// Specialized endpoint for school performance data
+// Replace the existing /api/schools/performance endpoint with this fixed version
+
 app.get('/api/schools/performance', async (req, res) => {
   stats.totalRequests++;
   
@@ -140,42 +141,63 @@ app.get('/api/schools/performance', async (req, res) => {
     // Fetch both sheets
     const [profileData, performanceData] = await Promise.all([
       fetchFromGoogleSheets('School Profile', 'A:E'), // AGE ID, Name, Suburb, Region, Calendar Year
-      fetchFromGoogleSheets('School Performance', 'A:Z') // ID + performance data by year
+      fetchFromGoogleSheets('School Performance', 'A:Z') // Complex structure with headers in row 3
     ]);
+
+    console.log('Profile data rows:', profileData.length);
+    console.log('Performance data rows:', performanceData.length);
 
     // Process profile data
     const profileHeaders = profileData[0];
     const profiles = profileData.slice(1).map(row => ({
-      ageId: row[0],
+      ageId: String(row[0] || '').trim(),  // Convert to string and trim
       name: row[1],
       suburb: row[2],
       region: row[3],
       calendarYear: parseInt(row[4])
     }));
 
-    // Process performance data
-    // Row 3 contains the years
-    const yearRow = performanceData[2];
-    const yearColumns = {};
+    // Process performance data - FIXED STRUCTURE
+    // Row 0: Category headers
+    // Row 1: Metric descriptions  
+    // Row 2: Column headers including ID, School, Locality, and years
+    // Row 3+: Actual data
     
-    // Map year to column index
-    yearRow.forEach((cellValue, index) => {
-      if (cellValue && !isNaN(cellValue)) {
-        yearColumns[parseInt(cellValue)] = index;
+    const headerRow = performanceData[2]; // This contains ID, School, Locality, 2021, 2022, etc.
+    console.log('Header row:', headerRow);
+    
+    // Find year columns - they're numbers in the header row
+    const yearColumns = {};
+    headerRow.forEach((header, index) => {
+      if (header && !isNaN(header) && header >= 2021 && header <= 2024) {
+        yearColumns[header] = index;
+        console.log(`Found year ${header} at column ${index}`);
       }
     });
+    
+    console.log('Year columns found:', yearColumns);
 
-    // Process performance records (starting from row 4)
+    // Process performance records (starting from row 4, which is index 3)
     const performances = performanceData.slice(3).map(row => {
-      const record = { id: row[0] };
+      const record = { 
+        id: String(row[0] || '').trim(), // Convert to string and trim
+        school: row[1],
+        locality: row[2]
+      };
       
-      // Extract performance for each year
+      // Extract performance for each year from the first set of year columns
       Object.entries(yearColumns).forEach(([year, colIndex]) => {
-        record[`performance_${year}`] = row[colIndex] || null;
+        // Only get the first occurrence of each year (columns 3-6)
+        if (colIndex >= 3 && colIndex <= 6) {
+          record[`performance_${year}`] = row[colIndex];
+        }
       });
       
       return record;
     });
+
+    console.log('Sample performance record:', performances[0]);
+    console.log('Total performance records:', performances.length);
 
     // Join the data
     const joinedData = [];
@@ -190,13 +212,15 @@ app.get('/api/schools/performance', async (req, res) => {
         };
         
         // Add all year performances
-        Object.keys(yearColumns).forEach(year => {
+        [2021, 2022, 2023, 2024].forEach(year => {
           schoolData.performances[year] = perfRecord[`performance_${year}`];
         });
         
         joinedData.push(schoolData);
       }
     });
+
+    console.log('Joined data count:', joinedData.length);
 
     // Apply filters if provided
     let filteredData = joinedData;
@@ -214,7 +238,7 @@ app.get('/api/schools/performance', async (req, res) => {
     
     if (region) {
       filteredData = filteredData.filter(school => 
-        school.region.toLowerCase().includes(region.toLowerCase())
+        school.region && school.region.toLowerCase().includes(region.toLowerCase())
       );
     }
 
@@ -240,20 +264,24 @@ app.get('/api/schools/performance', async (req, res) => {
 
     // Calculate average performance for each school
     Object.values(schoolSummary).forEach(school => {
-      const scores = Object.values(school.performances).filter(v => v !== null);
+      const scores = Object.values(school.performances)
+        .filter(v => v !== null && v !== undefined)
+        .map(v => parseFloat(v));
+      
       if (scores.length > 0) {
-        school.averagePerformance = scores.reduce((a, b) => parseFloat(a) + parseFloat(b), 0) / scores.length;
+        school.averagePerformance = scores.reduce((a, b) => a + b, 0) / scores.length;
       }
     });
 
     const result = {
       schools: Object.values(schoolSummary),
       totalSchools: Object.keys(schoolSummary).length,
-      years: Object.keys(yearColumns).sort(),
+      years: [2021, 2022, 2023, 2024],
       metadata: {
         profileCount: profiles.length,
         performanceCount: performances.length,
-        joinedCount: filteredData.length
+        joinedCount: filteredData.length,
+        yearColumnsFound: Object.keys(yearColumns)
       }
     };
 
