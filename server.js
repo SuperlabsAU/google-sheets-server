@@ -568,6 +568,103 @@ function calculateAverageByYear(schools, years) {
   return averages;
 }
 
+// Add this debug endpoint to your server.js to diagnose the join issue
+
+app.get('/api/debug/join-issue', async (req, res) => {
+  try {
+    // Fetch both sheets
+    const [profileData, performanceData] = await Promise.all([
+      fetchFromGoogleSheets('School Profile', 'A:B'), // Just ID and Name
+      fetchFromGoogleSheets('School Performance', 'A:C') // Just ID, School, Locality
+    ]);
+
+    // Get sample profile IDs
+    const profileSample = profileData.slice(1, 6).map(row => ({
+      raw: row[0],
+      type: typeof row[0],
+      trimmed: String(row[0] || '').trim(),
+      name: row[1]
+    }));
+
+    // Get sample performance IDs
+    const performanceSample = performanceData.slice(3, 8).map(row => ({
+      raw: row[0],
+      type: typeof row[0],
+      trimmed: String(row[0] || '').trim(),
+      school: row[1]
+    }));
+
+    // Try to find matches
+    const matches = [];
+    profileSample.forEach(profile => {
+      const match = performanceSample.find(perf => 
+        String(perf.raw).trim() === String(profile.raw).trim()
+      );
+      matches.push({
+        profileId: profile.trimmed,
+        profileName: profile.name,
+        foundMatch: !!match,
+        matchedWith: match ? match.school : 'NO MATCH'
+      });
+    });
+
+    res.json({
+      debug: {
+        profileHeaders: profileData[0],
+        performanceHeaders: performanceData[2], // Row 3 has the headers
+        profileSample: profileSample,
+        performanceSample: performanceSample,
+        matches: matches,
+        issue: matches.every(m => !m.foundMatch) ? 
+          'No IDs are matching! Check if School AGE ID matches ID column' : 
+          'Some matches found'
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Also add a simpler endpoint to just compare the first few IDs
+app.get('/api/debug/compare-ids', async (req, res) => {
+  try {
+    const [profileData, performanceData] = await Promise.all([
+      fetchFromGoogleSheets('School Profile', 'A1:A10'),
+      fetchFromGoogleSheets('School Performance', 'A1:A10')
+    ]);
+
+    // Get the column headers
+    const profileHeader = profileData[0][0]; // Should be "School AGE ID"
+    const performanceHeader = performanceData[2][0]; // Should be "ID"
+
+    // Get actual IDs
+    const profileIDs = profileData.slice(1, 6).map(row => row[0]);
+    const performanceIDs = performanceData.slice(3, 8).map(row => row[0]);
+
+    res.json({
+      headers: {
+        profile: profileHeader,
+        performance: performanceHeader
+      },
+      firstFiveIDs: {
+        profile: profileIDs,
+        performance: performanceIDs
+      },
+      analysis: {
+        profileIDsAreNumbers: profileIDs.every(id => typeof id === 'number'),
+        performanceIDsAreNumbers: performanceIDs.every(id => typeof id === 'number'),
+        sampleMatch: `Profile ID "${profileIDs[0]}" ${
+          performanceIDs.includes(profileIDs[0]) ? 'MATCHES' : 'DOES NOT MATCH'
+        } performance IDs`
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Serve a simple demo page
 app.get('/', (req, res) => {
   res.send(`
