@@ -116,7 +116,7 @@ app.get('/api/sheets/:sheetName', async (req, res) => {
   }
 });
 
-// Replace the existing /api/schools/performance endpoint with this fixed version
+// Replace the /api/schools/performance endpoint with this corrected version
 
 app.get('/api/schools/performance', async (req, res) => {
   stats.totalRequests++;
@@ -140,57 +140,66 @@ app.get('/api/schools/performance', async (req, res) => {
 
     // Fetch both sheets
     const [profileData, performanceData] = await Promise.all([
-      fetchFromGoogleSheets('School Profile', 'A:E'), // AGE ID, Name, Suburb, Region, Calendar Year
-      fetchFromGoogleSheets('School Performance', 'A:Z') // Complex structure with headers in row 3
+      fetchFromGoogleSheets('School Profile', 'A:F'), // Need up to column F to include all data
+      fetchFromGoogleSheets('School Performance', 'A:K') // Get first several columns including years
     ]);
 
     console.log('Profile data rows:', profileData.length);
     console.log('Performance data rows:', performanceData.length);
 
     // Process profile data
+    // Column A: School AGE ID (not used for joining)
+    // Column B: School Name
+    // Column C: School Type  
+    // Column D: School ID (THIS IS WHAT WE JOIN ON!)
+    // Column E: Region
+    // Column F: Calendar Year
     const profileHeaders = profileData[0];
+    console.log('Profile headers:', profileHeaders);
+    
     const profiles = profileData.slice(1).map(row => ({
-      ageId: String(row[0] || '').trim(),  // Convert to string and trim
-      name: row[1],
-      suburb: row[2],
-      region: row[3],
-      calendarYear: parseInt(row[4])
+      ageId: String(row[0] || '').trim(),  // School AGE ID (column A)
+      name: row[1],                         // School Name (column B)
+      type: row[2],                         // School Type (column C)
+      schoolId: String(row[3] || '').trim(), // School ID (column D) - THIS IS THE JOIN KEY!
+      region: row[4],                       // Region (column E)
+      calendarYear: parseInt(row[5])       // Calendar Year (column F)
     }));
 
-    // Process performance data - FIXED STRUCTURE
+    console.log('Sample profile record:', profiles[0]);
+
+    // Process performance data
     // Row 0: Category headers
     // Row 1: Metric descriptions  
     // Row 2: Column headers including ID, School, Locality, and years
     // Row 3+: Actual data
     
     const headerRow = performanceData[2]; // This contains ID, School, Locality, 2021, 2022, etc.
-    console.log('Header row:', headerRow);
+    console.log('Performance header row:', headerRow);
     
     // Find year columns - they're numbers in the header row
     const yearColumns = {};
     headerRow.forEach((header, index) => {
       if (header && !isNaN(header) && header >= 2021 && header <= 2024) {
-        yearColumns[header] = index;
-        console.log(`Found year ${header} at column ${index}`);
+        // Only take the first occurrence of each year
+        if (!yearColumns[header]) {
+          yearColumns[header] = index;
+          console.log(`Found year ${header} at column ${index}`);
+        }
       }
     });
-    
-    console.log('Year columns found:', yearColumns);
 
     // Process performance records (starting from row 4, which is index 3)
     const performances = performanceData.slice(3).map(row => {
       const record = { 
-        id: String(row[0] || '').trim(), // Convert to string and trim
-        school: row[1],
-        locality: row[2]
+        id: String(row[0] || '').trim(),  // ID (column A) - THIS MATCHES School ID from profile!
+        school: row[1],                   // School name (column B)
+        locality: row[2]                  // Locality (column C)
       };
       
-      // Extract performance for each year from the first set of year columns
+      // Extract performance for each year
       Object.entries(yearColumns).forEach(([year, colIndex]) => {
-        // Only get the first occurrence of each year (columns 3-6)
-        if (colIndex >= 3 && colIndex <= 6) {
-          record[`performance_${year}`] = row[colIndex];
-        }
+        record[`performance_${year}`] = row[colIndex];
       });
       
       return record;
@@ -199,15 +208,18 @@ app.get('/api/schools/performance', async (req, res) => {
     console.log('Sample performance record:', performances[0]);
     console.log('Total performance records:', performances.length);
 
-    // Join the data
+    // Join the data - FIXED: Join on profile.schoolId === performance.id
     const joinedData = [];
     
     profiles.forEach(profile => {
-      const perfRecord = performances.find(p => p.id === profile.ageId);
+      // Join using School ID (column D) from profile with ID (column A) from performance
+      const perfRecord = performances.find(p => p.id === profile.schoolId);
       
       if (perfRecord) {
         const schoolData = {
           ...profile,
+          performanceSchoolName: perfRecord.school,
+          performanceLocality: perfRecord.locality,
           performances: {}
         };
         
@@ -221,6 +233,9 @@ app.get('/api/schools/performance', async (req, res) => {
     });
 
     console.log('Joined data count:', joinedData.length);
+    if (joinedData.length > 0) {
+      console.log('Sample joined record:', joinedData[0]);
+    }
 
     // Apply filters if provided
     let filteredData = joinedData;
@@ -233,7 +248,7 @@ app.get('/api/schools/performance', async (req, res) => {
     }
     
     if (schoolId) {
-      filteredData = filteredData.filter(school => school.ageId === schoolId);
+      filteredData = filteredData.filter(school => school.schoolId === schoolId);
     }
     
     if (region) {
@@ -245,19 +260,20 @@ app.get('/api/schools/performance', async (req, res) => {
     // Group by school for summary
     const schoolSummary = {};
     filteredData.forEach(record => {
-      if (!schoolSummary[record.ageId]) {
-        schoolSummary[record.ageId] = {
+      if (!schoolSummary[record.schoolId]) {
+        schoolSummary[record.schoolId] = {
+          schoolId: record.schoolId,
           ageId: record.ageId,
           name: record.name,
+          type: record.type,
           profiles: [],
           performances: record.performances,
           averagePerformance: 0
         };
       }
       
-      schoolSummary[record.ageId].profiles.push({
+      schoolSummary[record.schoolId].profiles.push({
         year: record.calendarYear,
-        suburb: record.suburb,
         region: record.region
       });
     });
@@ -281,7 +297,9 @@ app.get('/api/schools/performance', async (req, res) => {
         profileCount: profiles.length,
         performanceCount: performances.length,
         joinedCount: filteredData.length,
-        yearColumnsFound: Object.keys(yearColumns)
+        yearColumnsFound: Object.keys(yearColumns),
+        sampleProfileId: profiles[0]?.schoolId,
+        samplePerformanceId: performances[0]?.id
       }
     };
 
