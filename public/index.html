@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Victorian School Performance Dashboard | VCE, VET, Enrolments, Staff Ratios</title>
+  <title>Compare Victorian High Schools</title>
 
   <!-- SEO Essentials -->
   <meta name="description" content="Explore Victorian school performance: enrolments, VCE results, VET participation, staff ratios, and study score trends. Filter by school, suburb, postcode and more."/>
-  <meta name="keywords" content="Victorian schools, VCE results, VET participation, school performance, study scores, enrolments, staff ratios, education analytics, school profiles, Melbourne schools"/>
+  <meta name="keywords" content="Compare schools, compare schools near me, compare victorian schools, Victorian schools, VCE results, VET participation, school performance, study scores, enrolments, staff ratios, education analytics, school profiles, Melbourne schools"/>
   <link rel="canonical" href="https://www.schoolcomparison.com.au/"/>
 
   <!-- Open Graph -->
@@ -15,13 +15,13 @@
   <meta property="og:description" content="Filter and compare schools across enrolments, VCE results, VET, staff composition and more."/>
   <meta property="og:type" content="website"/>
   <meta property="og:url" content="https://www.schoolcomparison.com.au/"/>
-  <meta property="og:image" content="https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?q=80&w=1600&auto=format&fit=crop"/>
+  <meta property="og:image" content="hero.png"/>
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image"/>
   <meta name="twitter:title" content="Victorian School Performance Dashboard"/>
   <meta name="twitter:description" content="Filter and compare schools across enrolments, VCE results, VET, staff composition and more."/>
-  <meta name="twitter:image" content="https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?q=80&w=1600&auto=format&fit=crop"/>
+  <meta name="twitter:image" content="hero.png"/>
 
   <!-- Structured Data -->
   <script type="application/ld+json">
@@ -47,11 +47,11 @@
     :root{
       --font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
       --font-base: 14px;
-      --font-h1: 30px;
+      --font-h1: 320px;
       --font-h2: 22px;
       --font-h3: 16px;
 
-      --color-bg: #f8fafc;
+      --color-bg: #ffffff;
       --color-card: #ffffff;
       --color-text: #0f172a;
       --color-subtle: #475569;
@@ -78,7 +78,7 @@
 
     /* Hero */
     .hero{border-radius:var(--radius-card);box-shadow:var(--shadow-card);overflow:hidden}
-    .hero-img{width:100%;height:220px;object-fit:cover}
+    .hero-img{width:100%;height:auto;object-fit:contain}
     @media(min-width:768px){.hero-img{height:300px}}
 
     /* Card & table */
@@ -131,7 +131,7 @@
     <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-6">
       <a href="#" class="flex items-center gap-2 font-bold text-slate-900">
         <span class="brand-dot"></span>
-        <span>School Insights</span>
+        <span>School Comparison</span>
       </a>
       <nav class="ml-auto flex items-center gap-1">
         <a href="#" class="nav-link text-slate-700 hover:text-slate-900">Overview</a>
@@ -141,16 +141,13 @@
     </div>
   </header>
 
-  <!-- Hero -->
-  <section class="max-w-7xl mx-auto px-4 mt-6">
-    <div class="hero card">
-      <img class="hero-img" alt="Victorian schools" src="https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?q=80&w=1600&auto=format&fit=crop"/>
-      <div class="p-5 md:p-6">
-        <h1 class="font-bold mb-1">Victorian School Performance Dashboard</h1>
-        <p class="text-slate-600">Search, filter and compare schools across enrolments, staffing and performance outcomes such as VCE, VET and study scores.</p>
-      </div>
-    </div>
-  </section>
+
+  <img class="hero-img" alt="Victorian schools" src="hero.png"/>
+  <div class="p-5 md:p-6">
+    <h1 class="font-bold mb-1">Find your perfect school match </h1>
+    <p class="text-slate-600">With so many choices, picking a school for your child can be hard to navigate. We bring together data and create insights to make the journey easier for you.</p>
+  </div>
+ 
 
   <!-- Filters -->
   <section class="max-w-7xl mx-auto px-4 mt-6">
@@ -180,25 +177,6 @@
         <h2 class="font-bold">All Schools</h2>
         <span id="tableMeta" class="text-sm text-slate-500"></span>
       </div>
-      <details id="dataKeysPanel" class="mb-3">
-        <summary class="cursor-pointer select-none text-slate-700 hover:text-slate-900">Data keys (click to expand)</summary>
-        <div class="mt-2 grid md:grid-cols-2 gap-3">
-          <div class="card p-3">
-            <div class="flex items-center justify-between">
-              <h4 class="font-semibold text-sm">Joined row keys (/api/schools)</h4>
-              <button id="copyJoinedKeys" type="button" class="text-xs px-2 py-1 border rounded">Copy</button>
-            </div>
-            <pre id="joinedKeysPre" class="mt-2 text-xs whitespace-pre-wrap"></pre>
-          </div>
-          <div class="card p-3">
-            <div class="flex items-center justify-between">
-              <h4 class="font-semibold text-sm">Profile headers (School Profile)</h4>
-              <button id="copyProfileKeys" type="button" class="text-xs px-2 py-1 border rounded">Copy</button>
-            </div>
-            <pre id="profileKeysPre" class="mt-2 text-xs whitespace-pre-wrap"></pre>
-          </div>
-        </div>
-      </details>
       <div class="table-wrapper">
         <div class="table-scroller overflow-x-auto">
           <table class="min-w-full" id="schoolsTable"></table>
