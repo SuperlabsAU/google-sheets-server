@@ -13,6 +13,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
+// Serve static files from /public (index.html, assets, etc.)
+app.use(express.static(path.resolve(process.cwd(), "public")));
 
 // ---- Env
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
@@ -328,6 +330,10 @@ async function refreshAll(reason = "manual") {
 }
 
 // ---- Routes
+// Root: serve the public/index.html as the default page
+app.get("/", (_req, res) => {
+  res.sendFile(path.resolve(process.cwd(), "public", "index.html"));
+});
 app.get("/health", (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
@@ -462,6 +468,11 @@ app.get("/api/schools", async (req, res) => {
     increment("errors");
     res.status(500).json({ error: String(err?.message || err) });
   }
+});
+
+// SPA fallback for client-side routes (exclude /api and /admin)
+app.get(/^\/(?!api|admin).*/, (_req, res) => {
+  res.sendFile(path.resolve(process.cwd(), "public", "index.html"));
 });
 
 // ---- Start (try load from disk; else pre-warm from Sheets)
