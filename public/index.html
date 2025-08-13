@@ -79,7 +79,7 @@
     /* Hero */
     .hero{border-radius:var(--radius-card);box-shadow:var(--shadow-card);overflow:hidden}
     .hero-img{width:100%;height:auto;object-fit:contain}
-    @media(min-width:768px){.hero-img{height:300px}}
+    @media(min-width:768px){.hero-img{height:500px}}
 
     /* Card & table */
     .card{background:var(--color-card);border:1px solid #e5e7eb;border-radius:var(--radius-card);box-shadow:var(--shadow-card)}
@@ -124,6 +124,18 @@
     h3{font-size:var(--font-h3)}
   </style>
 </head>
+
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-W17VW580ZY"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-W17VW580ZY');
+</script>
+
 <body>
 
   <!-- Header with logo + nav -->
@@ -134,7 +146,8 @@
         <span>School Comparison</span>
       </a>
       <nav class="ml-auto flex items-center gap-1">
-        <a href="#" class="nav-link text-slate-700 hover:text-slate-900">Overview</a>
+        <a href="#" class="nav-link text-slate-700 hover:text-slate-900">Home</a>
+        <a href="#" class="nav-link text-slate-700 hover:text-slate-900">VIC</a>
       </nav>
     </div>
   </header>
@@ -274,9 +287,10 @@
   <!-- Footer -->
   <footer class="mt-12 border-t">
     <div class="max-w-7xl mx-auto px-4 py-6 text-sm text-slate-600 flex flex-col md:flex-row gap-2 md:gap-6">
-      <span>© <span id="yearNow"></span> School Comparison</span>
-    <!--  <a href="#" class="hover:text-slate-900">Privacy</a> -->
-
+      <span>© <span id="yearNow"></span> School Insights</span>
+      <a href="#" class="hover:text-slate-900">Privacy</a>
+      <a href="#" class="hover:text-slate-900">Terms</a>
+      <a href="#" class="hover:text-slate-900">Contact</a>
     </div>
   </footer>
 
