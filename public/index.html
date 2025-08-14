@@ -643,30 +643,73 @@
     const cols = getActiveColumns();
 
     for(let i=start;i<end;i++){
-      const r=filteredRows[i]; const idVal=r[idKey];
-      const tr=document.createElement('tr');
-
-      cols.forEach(col=>{
-        const td=document.createElement('td'); td.className='px-3 py-2 border-b'; td.style.borderColor='var(--color-table-row-border)'; if(col.width){ td.style.width=(typeof col.width==='number'? col.width+'px' : col.width); }
-
-        if(col.key==='__select'){
-          const cb=document.createElement('input'); cb.type='checkbox'; cb.className='accent-blue-600'; cb.dataset.sid=String(idVal); cb.checked=selectedSchoolIds.has(String(idVal));
-          cb.addEventListener('change',()=>{ const sid=String(idVal); if(cb.checked) selectedSchoolIds.add(sid); else selectedSchoolIds.delete(sid); refreshAllCharts(); updateSelectedMeta(); updateGlobalLegend(); });
-          td.appendChild(cb);
-        } else if (URL_KEY && col.key===URL_KEY) {
-          const val=r[col.key]; if(val){ const a=document.createElement('a'); a.href=formatUrl(val); a.target='_blank'; a.rel='noopener'; a.setAttribute('title','Open website'); a.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'; td.appendChild(a);} }
-        else {
-          td.textContent = r[col.key] ?? '';
+    const r=filteredRows[i]; const idVal=r[idKey];
+    const tr=document.createElement('tr');
+    cols.forEach(col=>{
+      const td=document.createElement('td'); 
+      td.className='px-3 py-2 border-b';
+      td.style.borderColor='var(--color-table-row-border)';
+      if(col.width){ td.style.width=(typeof col.width==='number'? col.width+'px' : col.width); }
+      
+      if(col.key==='__select'){
+        // Replace checkbox with toggle button
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'w-8 h-8 rounded-full flex items-center justify-center text-white focus:outline-none';
+        const sid = String(idVal);
+        if(selectedSchoolIds.has(sid)) {
+          btn.classList.add('bg-red-500');
+          btn.textContent = '-';
+        } else {
+          btn.classList.add('bg-green-500');
+          btn.textContent = '+';
         }
-
-        tr.appendChild(td);
-      });
-
-      tb.appendChild(tr);
-    }
-
-    tbl.appendChild(tb); updatePager();
+        btn.addEventListener('click', ()=>{
+          toggleSelection(sid, btn);
+        });
+        td.appendChild(btn);
+      }
+      else if (URL_KEY && col.key===URL_KEY) {
+        const val = r[col.key];
+        if (val) {
+          const a = document.createElement('a');
+          a.href = formatUrl(val);
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.setAttribute('title','Open website');
+          a.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+          td.appendChild(a);
+        } else {
+          td.textContent = '';
+        }
+      }
+      else {
+        const val = r[col.key];
+        td.textContent = (val === undefined || val === null) ? '' : String(val);
+      }
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
   }
+  tbl.appendChild(tb); updatePager();
+}
+
+function toggleSelection(sid, btn) {
+  if(selectedSchoolIds.has(sid)) {
+    selectedSchoolIds.delete(sid);
+    btn.classList.remove('bg-red-500');
+    btn.classList.add('bg-green-500');
+    btn.textContent = '+';
+  } else {
+    selectedSchoolIds.add(sid);
+    btn.classList.remove('bg-green-500');
+    btn.classList.add('bg-red-500');
+    btn.textContent = '-';
+  }
+  refreshAllCharts();
+  updateSelectedMeta();
+  updateGlobalLegend();
+}
 
   function updatePager(){
     document.getElementById('tableMeta').textContent = `${filteredRows.length.toLocaleString()} matched rows`;
