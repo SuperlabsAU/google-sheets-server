@@ -142,7 +142,7 @@
   <header class="site-header">
     <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-6">
       <a href="#" class="flex items-center gap-2 font-bold text-slate-900">
-        <span class="brand-dot"></span>
+        <img src="logo.svg" alt="School Comparison Logo" class="h-6 w-auto"/>
         <span>School Comparison</span>
       </a>
       <nav class="ml-auto flex items-center gap-1">
@@ -154,8 +154,8 @@
 
 
   <img class="hero-img" alt="Victorian schools" src="hero.png"/>
-  <div class="p-5 md:p-6">
-    <h1 class="font-bold mb-1">Find your perfect school match </h1>
+  <div class="p-5 md:p-6 text-center flex flex-col items-center justify-center">
+    <h1 class="font-bold mb-1 text-4xl">Find your perfect school match</h1>
     <p class="text-slate-600">With so many choices, picking a school for your child can be hard to navigate. We bring together data and create insights to make the journey easier for you.</p>
   </div>
  
@@ -206,11 +206,9 @@
     <h2 class="font-bold mb-1">School profile</h2>
     <p class="text-slate-600 mb-3">Staff composition and language background indicators. Use the filters above and select schools to add them to charts.</p>
     <div id="chartsProfile" class="charts-grid">
-      <!-- STAFF -->
       <div class="chart-card">
         <div class="flex items-center gap-2 mb-1">
-          <!-- Icon -->
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-3-3.87M8 21v-2a4 4 0 0 1 3-3.87"/><circle cx="12" cy="7" r="4"/></svg>
+          <img src="teacher.svg" alt="Staff Icon" class="w-5 h-5"/>
           <h3 class="font-semibold">Teaching vs Non-teaching staff (by year)</h3>
         </div>
         <p class="text-[10px] mb-1 text-slate-600">Indicator of staffing distribution.</p>
@@ -219,7 +217,7 @@
       <!-- GENDER -->
       <div class="chart-card">
         <div class="flex items-center gap-2 mb-1">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M8 15v6M16 15v6"/></svg>
+          <img src="gender.svg" alt="Gender Icon" class="w-5 h-5"/>
           <h3 class="font-semibold">Total enrolments: Girls vs Boys (by year)</h3>
         </div>
         <p class="text-[10px] mb-1 text-slate-600">Gender distribution across selected years.</p>
@@ -228,7 +226,7 @@
       <!-- LOTE -->
       <div class="chart-card">
         <div class="flex items-center gap-2 mb-1">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+          <img src="lote.svg" alt="LOTE Icon" class="w-5 h-5"/>
           <h3 class="font-semibold">% speaking a language other than English</h3>
         </div>
         <p class="text-[10px] mb-1 text-slate-600">Cultural diversity proxy. Values are percentages.</p>
@@ -243,14 +241,14 @@
     <div id="chartsEnrol" class="charts-grid">
       <div class="chart-card">
         <div class="flex items-center gap-2 mb-1">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-4 3 3 4-5"/></svg>
+          <img src="enrolments.svg" alt="Enrolments Icon" class="w-5 h-5"/>
           <h3 class="font-semibold"># enrolled in any VCE/VM/VET (Units 3&4)</h3>
         </div>
         <div class="chart-h"><canvas id="chartA1"></canvas></div>
       </div>
       <div class="chart-card">
         <div class="flex items-center gap-2 mb-1">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-4 3 3 4-5"/></svg>
+          <img src="enrolments.svg" alt="VET Icon" class="w-5 h-5"/>
           <h3 class="font-semibold"># enrolled in VET certificate</h3>
         </div>
         <div class="chart-h"><canvas id="chartA2"></canvas></div>
@@ -262,12 +260,48 @@
     <h2 class="font-bold mb-1">Performance</h2>
     <p class="text-slate-600 mb-3">Outcomes across VTAC applications, VCE completions, VET competencies and study scores.</p>
     <div id="chartsPerf" class="charts-grid">
-      <div class="chart-card"><div class="flex items-center gap-2 mb-1"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/></svg><h3 class="font-semibold">% VCE students applying via VTAC</h3></div><div class="chart-h"><canvas id="chartB"></canvas></div></div>
-      <div class="chart-card"><div class="flex items-center gap-2 mb-1"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/></svg><h3 class="font-semibold">% satisfactory VCE completions</h3></div><div class="chart-h"><canvas id="chartC"></canvas></div></div>
-      <div class="chart-card"><div class="flex items-center gap-2 mb-1"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/></svg><h3 class="font-semibold"># awarded VCE (Baccalaureate)</h3></div><div class="chart-h"><canvas id="chartD"></canvas></div></div>
-      <div class="chart-card"><div class="flex items-center gap-2 mb-1"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/></svg><h3 class="font-semibold">% VET units of competency completed</h3></div><div class="chart-h"><canvas id="chartE"></canvas></div></div>
-      <div class="chart-card"><div class="flex items-center gap-2 mb-1"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/></svg><h3 class="font-semibold">Median VCE study score</h3></div><div class="chart-h"><canvas id="chartF"></canvas></div></div>
-      <div class="chart-card"><div class="flex items-center gap-2 mb-1"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/></svg><h3 class="font-semibold">% study scores of 40 and over</h3></div><div class="chart-h"><canvas id="chartG"></canvas></div></div>
+      <div class="chart-card">
+        <div class="flex items-center gap-2 mb-1">
+          <img src="completions.svg" alt="VTAC Icon" class="w-5 h-5"/>
+          <h3 class="font-semibold">% VCE students applying via VTAC</h3>
+        </div>
+        <div class="chart-h"><canvas id="chartB"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="flex items-center gap-2 mb-1">
+          <img src="completions.svg" alt="Completion Icon" class="w-5 h-5"/>
+          <h3 class="font-semibold">% satisfactory VCE completions</h3>
+        </div>
+        <div class="chart-h"><canvas id="chartC"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="flex items-center gap-2 mb-1">
+          <img src="completions.svg" alt="Baccalaureate Icon" class="w-5 h-5"/>
+          <h3 class="font-semibold"># awarded VCE (Baccalaureate)</h3>
+        </div>
+        <div class="chart-h"><canvas id="chartD"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="flex items-center gap-2 mb-1">
+          <img src="placeholder.svg" alt="Competency Icon" class="w-5 h-5"/>
+          <h3 class="font-semibold">% VET units of competency completed</h3>
+        </div>
+        <div class="chart-h"><canvas id="chartE"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="flex items-center gap-2 mb-1">
+          <img src="placeholder.svg" alt="Study Score Icon" class="w-5 h-5"/>
+          <h3 class="font-semibold">Median VCE study score</h3>
+        </div>
+        <div class="chart-h"><canvas id="chartF"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="flex items-center gap-2 mb-1">
+          <img src="placeholder.svg" alt="High Score Icon" class="w-5 h-5"/>
+          <h3 class="font-semibold">% study scores of 40 and over</h3>
+        </div>
+        <div class="chart-h"><canvas id="chartG"></canvas></div>
+      </div>
     </div>
   </section>
 
